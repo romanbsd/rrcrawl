@@ -1,4 +1,4 @@
-import { requestJson, type FetchLike } from "../http.js";
+import { requestJson, toQuotaError, type FetchLike } from "../http.js";
 import type {
   CrawlProvider,
   CrawlRequest,
@@ -83,16 +83,25 @@ export class TavilyProvider implements ScrapeProvider, CrawlProvider {
     return { provider: this.name, pages };
   }
 
-  private post<T>(path: string, body: Record<string, unknown>): Promise<T> {
-    return requestJson<T>(
-      this.fetchFn,
-      `${this.options.apiUrl}${path}`,
-      {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify(body),
-      },
-      this.options.requestTimeoutMs,
-    );
+  // 432 (plan usage exceeded) and 433 (out of credits), plus 402, are Tavily's
+  // permanent quota signals. 429 is a transient rate limit, left to failover.
+  private async post<T>(
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<T> {
+    try {
+      return await requestJson<T>(
+        this.fetchFn,
+        `${this.options.apiUrl}${path}`,
+        {
+          method: "POST",
+          headers: this.headers(),
+          body: JSON.stringify(body),
+        },
+        this.options.requestTimeoutMs,
+      );
+    } catch (error) {
+      throw toQuotaError(this.name, error, [402, 432, 433]);
+    }
   }
 }

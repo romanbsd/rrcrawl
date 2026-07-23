@@ -1,4 +1,4 @@
-import { requestText, type FetchLike } from "../http.js";
+import { requestText, toQuotaError, type FetchLike } from "../http.js";
 import type {
   ScrapeProvider,
   ScrapeRequest,
@@ -28,12 +28,19 @@ export class ScrapeDoProvider implements ScrapeProvider {
       endpoint.searchParams.set("token", this.options.apiToken);
     }
 
-    const markdown = await requestText(
-      this.fetchFn,
-      endpoint.toString(),
-      { method: "GET", headers: { accept: "text/markdown, text/plain, */*" } },
-      this.options.requestTimeoutMs,
-    );
+    // 402 Payment Required is the permanent out-of-credits signal; 429
+    // (rate/concurrency) is transient and left to normal failover.
+    let markdown: string;
+    try {
+      markdown = await requestText(
+        this.fetchFn,
+        endpoint.toString(),
+        { method: "GET", headers: { accept: "text/markdown, text/plain, */*" } },
+        this.options.requestTimeoutMs,
+      );
+    } catch (error) {
+      throw toQuotaError(this.name, error, [402]);
+    }
     if (!markdown.trim()) {
       throw new Error("Scrape.do returned no markdown content");
     }

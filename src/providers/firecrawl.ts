@@ -1,4 +1,4 @@
-import { requestJson, type FetchLike } from "../http.js";
+import { requestJson, toQuotaError, type FetchLike } from "../http.js";
 import type {
   CrawlProvider,
   CrawlRequest,
@@ -70,8 +70,7 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
   }
 
   async scrape(request: ScrapeRequest): Promise<ScrapeResult> {
-    const response = await requestJson<FirecrawlScrapeResponse>(
-      this.fetchFn,
+    const response = await this.json<FirecrawlScrapeResponse>(
       `${this.options.apiUrl}/v2/scrape`,
       {
         method: "POST",
@@ -82,7 +81,6 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
           onlyMainContent: true,
         }),
       },
-      this.options.requestTimeoutMs,
     );
 
     if (response.success === false) {
@@ -101,8 +99,7 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
   }
 
   async crawl(request: CrawlRequest): Promise<CrawlResult> {
-    const started = await requestJson<FirecrawlStartResponse>(
-      this.fetchFn,
+    const started = await this.json<FirecrawlStartResponse>(
       `${this.options.apiUrl}/v2/crawl`,
       {
         method: "POST",
@@ -121,7 +118,6 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
           },
         }),
       },
-      this.options.requestTimeoutMs,
     );
 
     if (started.success === false) {
@@ -135,11 +131,9 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
 
     const deadline = Date.now() + this.options.crawlTimeoutMs;
     while (Date.now() < deadline) {
-      const status = await requestJson<FirecrawlStatusResponse>(
-        this.fetchFn,
+      const status = await this.json<FirecrawlStatusResponse>(
         `${this.options.apiUrl}/v2/crawl/${encodeURIComponent(started.id)}`,
         { method: "GET", headers: this.headers() },
-        this.options.requestTimeoutMs,
       );
 
       if (status.status === "completed") {
@@ -169,6 +163,21 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
     throw new Error(
       `Firecrawl crawl timed out after ${this.options.crawlTimeoutMs}ms`,
     );
+  }
+
+  // 402 Payment Required is Firecrawl's insufficient-credits signal (permanent).
+  // 429 rate limits are transient and deliberately left to normal failover.
+  private async json<T>(url: string, init: RequestInit): Promise<T> {
+    try {
+      return await requestJson<T>(
+        this.fetchFn,
+        url,
+        init,
+        this.options.requestTimeoutMs,
+      );
+    } catch (error) {
+      throw toQuotaError(this.name, error, [402]);
+    }
   }
 
   private documentUrl(document: FirecrawlDocument): string | undefined {

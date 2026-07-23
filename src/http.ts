@@ -14,6 +14,32 @@ export class HttpError extends Error {
   }
 }
 
+// Signals that a provider has exhausted its quota/credits (as opposed to a
+// transient rate limit). The router disables the provider for the rest of the
+// process when it sees this.
+export class QuotaExceededError extends Error {
+  constructor(
+    readonly provider: string,
+    readonly status: number,
+  ) {
+    super(`${provider} quota exhausted (HTTP ${status})`);
+    this.name = "QuotaExceededError";
+  }
+}
+
+// Converts an HttpError with a hard quota/credit status into a
+// QuotaExceededError; passes every other error through unchanged.
+export function toQuotaError(
+  provider: string,
+  error: unknown,
+  quotaStatuses: readonly number[],
+): unknown {
+  if (error instanceof HttpError && quotaStatuses.includes(error.status)) {
+    return new QuotaExceededError(provider, error.status);
+  }
+  return error;
+}
+
 // Reads the full body under the same timeout/abort as the request so a stalled
 // body can't hang forever after the headers arrive.
 async function requestBody(

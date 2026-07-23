@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { FetchLike } from "../src/http.js";
+import { QuotaExceededError, type FetchLike } from "../src/http.js";
 import { FirecrawlProvider } from "../src/providers/firecrawl.js";
 import { ScrapeDoProvider } from "../src/providers/scrapedo.js";
 import { TavilyProvider } from "../src/providers/tavily.js";
@@ -97,6 +97,30 @@ describe("provider adapters", () => {
     await expect(provider.scrape({ url: "https://example.com" })).rejects.toThrow(
       "quota exceeded",
     );
+  });
+
+  it("maps a 402 to a QuotaExceededError but leaves 429 transient", async () => {
+    const make = (status: number) =>
+      new FirecrawlProvider({
+        apiUrl: "https://firecrawl.test",
+        requestTimeoutMs: 1000,
+        crawlTimeoutMs: 1000,
+        pollIntervalMs: 1,
+        fetchFn: vi.fn<FetchLike>(
+          async () =>
+            new Response(
+              JSON.stringify({ success: false, error: "no credits" }),
+              { status },
+            ),
+        ),
+      });
+
+    await expect(
+      make(402).scrape({ url: "https://example.com" }),
+    ).rejects.toBeInstanceOf(QuotaExceededError);
+    await expect(
+      make(429).scrape({ url: "https://example.com" }),
+    ).rejects.not.toBeInstanceOf(QuotaExceededError);
   });
 
   it("drops Firecrawl crawl pages that carry no resolvable URL", async () => {
