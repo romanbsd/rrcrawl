@@ -13,7 +13,7 @@ fails, rrcrawl tries every other provider in that tool's pool once.
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 22 or newer
 - At least one provider credential, or a OneCLI gateway configuration
 
 ## Run with npx
