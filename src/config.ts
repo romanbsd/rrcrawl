@@ -28,7 +28,12 @@ function positiveInteger(
 ): number {
   const value = env[name];
   if (!value) return fallback;
-  const parsed = Number(value);
+  // Plain base-10 digits only: reject hex, exponent, leading +/- and whitespace
+  // that Number() would silently accept.
+  if (!/^[0-9]+$/.test(value.trim())) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  const parsed = Number.parseInt(value.trim(), 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`);
   }

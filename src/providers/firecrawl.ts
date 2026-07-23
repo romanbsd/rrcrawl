@@ -21,11 +21,13 @@ interface FirecrawlDocument {
 
 interface FirecrawlScrapeResponse {
   success?: boolean;
+  error?: string;
   data?: FirecrawlDocument;
 }
 
 interface FirecrawlStartResponse {
   success?: boolean;
+  error?: string;
   id?: string;
 }
 
@@ -83,10 +85,18 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
       this.options.requestTimeoutMs,
     );
 
+    if (response.success === false) {
+      throw new Error(
+        `Firecrawl scrape failed: ${response.error ?? "unknown error"}`,
+      );
+    }
     if (!response.data?.markdown) {
       throw new Error("Firecrawl returned no markdown content");
     }
-    const page = this.page(response.data, request.url);
+    const page = this.page(
+      response.data,
+      this.documentUrl(response.data) ?? request.url,
+    );
     return { provider: this.name, ...page };
   }
 
@@ -114,6 +124,11 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
       this.options.requestTimeoutMs,
     );
 
+    if (started.success === false) {
+      throw new Error(
+        `Firecrawl crawl failed to start: ${started.error ?? "unknown error"}`,
+      );
+    }
     if (!started.id) {
       throw new Error("Firecrawl did not return a crawl job id");
     }
@@ -128,9 +143,16 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
       );
 
       if (status.status === "completed") {
+        // Each crawl page must carry its own URL. If Firecrawl omits it we drop
+        // the page rather than mislabel every one with the crawl root.
         const pages = (status.data ?? [])
-          .filter((document) => document.markdown)
-          .map((document) => this.page(document, request.url));
+          .map((document): Page | undefined => {
+            const url = this.documentUrl(document);
+            return document.markdown && url
+              ? this.page(document, url)
+              : undefined;
+          })
+          .filter((page): page is Page => page !== undefined);
         if (pages.length === 0) {
           throw new Error("Firecrawl crawl completed without page content");
         }
@@ -149,13 +171,18 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
     );
   }
 
-  private page(document: FirecrawlDocument, fallbackUrl: string): Page {
+  private documentUrl(document: FirecrawlDocument): string | undefined {
+    return (
+      document.metadata?.sourceURL ??
+      document.metadata?.sourceUrl ??
+      document.metadata?.url ??
+      undefined
+    );
+  }
+
+  private page(document: FirecrawlDocument, url: string): Page {
     return {
-      url:
-        document.metadata?.sourceURL ??
-        document.metadata?.sourceUrl ??
-        document.metadata?.url ??
-        fallbackUrl,
+      url,
       ...(document.metadata?.title
         ? { title: document.metadata.title }
         : {}),

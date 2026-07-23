@@ -82,6 +82,60 @@ describe("provider adapters", () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
+  it("surfaces a Firecrawl success:false error", async () => {
+    const fetchFn = vi.fn<FetchLike>(async () =>
+      jsonResponse({ success: false, error: "quota exceeded" }),
+    );
+    const provider = new FirecrawlProvider({
+      apiUrl: "https://firecrawl.test",
+      requestTimeoutMs: 1000,
+      crawlTimeoutMs: 1000,
+      pollIntervalMs: 1,
+      fetchFn,
+    });
+
+    await expect(provider.scrape({ url: "https://example.com" })).rejects.toThrow(
+      "quota exceeded",
+    );
+  });
+
+  it("drops Firecrawl crawl pages that carry no resolvable URL", async () => {
+    const fetchFn = vi
+      .fn<FetchLike>()
+      .mockResolvedValueOnce(jsonResponse({ id: "job-1" }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status: "completed",
+          data: [
+            {
+              markdown: "# One",
+              metadata: { sourceURL: "https://example.com/one" },
+            },
+            { markdown: "# Orphan", metadata: {} },
+          ],
+        }),
+      );
+    const provider = new FirecrawlProvider({
+      apiUrl: "https://firecrawl.test",
+      requestTimeoutMs: 1000,
+      crawlTimeoutMs: 1000,
+      pollIntervalMs: 1,
+      fetchFn,
+      sleep: vi.fn(async () => undefined),
+    });
+
+    const result = await provider.crawl({
+      url: "https://example.com",
+      limit: 5,
+      maxDepth: 2,
+      includePaths: [],
+      allowExternal: false,
+    });
+    expect(result.pages).toEqual([
+      { url: "https://example.com/one", markdown: "# One" },
+    ]);
+  });
+
   it("normalizes Tavily extraction", async () => {
     const fetchFn = vi.fn<FetchLike>(async () =>
       jsonResponse({
@@ -103,6 +157,30 @@ describe("provider adapters", () => {
       url: "https://example.com",
       markdown: "# Tavily",
     });
+  });
+
+  it("falls back to the request URL for Tavily crawl pages missing a URL", async () => {
+    const fetchFn = vi.fn<FetchLike>(async () =>
+      jsonResponse({
+        results: [{ url: "", raw_content: "# Page" }],
+      }),
+    );
+    const provider = new TavilyProvider({
+      apiUrl: "https://tavily.test",
+      requestTimeoutMs: 1000,
+      fetchFn,
+    });
+
+    const result = await provider.crawl({
+      url: "https://example.com",
+      limit: 5,
+      maxDepth: 1,
+      includePaths: [],
+      allowExternal: false,
+    });
+    expect(result.pages).toEqual([
+      { url: "https://example.com", markdown: "# Page" },
+    ]);
   });
 
   it("omits Scrape.do token in OneCLI mode", async () => {

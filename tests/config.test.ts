@@ -26,6 +26,16 @@ describe("loadConfig", () => {
     expect(config.firecrawl.apiKey).toBeUndefined();
   });
 
+  it("rejects a non-decimal timeout value", () => {
+    expect(() =>
+      loadConfig({
+        RRCRAWL_AUTH_MODE: "env",
+        FIRECRAWL_API_KEY: "fire",
+        RRCRAWL_REQUEST_TIMEOUT_MS: "0x1F4",
+      }),
+    ).toThrow("must be a positive integer");
+  });
+
   it("rejects an explicitly enabled provider without its env credential", () => {
     expect(() =>
       loadConfig({

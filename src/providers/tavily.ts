@@ -74,7 +74,7 @@ export class TavilyProvider implements ScrapeProvider, CrawlProvider {
     const pages = (response.results ?? [])
       .filter((result) => result.raw_content)
       .map((result) => ({
-        url: result.url,
+        url: result.url || request.url,
         markdown: result.raw_content ?? "",
       }));
     if (pages.length === 0) {

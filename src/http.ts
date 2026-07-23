@@ -14,12 +14,14 @@ export class HttpError extends Error {
   }
 }
 
-async function request(
+// Reads the full body under the same timeout/abort as the request so a stalled
+// body can't hang forever after the headers arrive.
+async function requestBody(
   fetchFn: FetchLike,
   url: string,
   init: RequestInit,
   timeoutMs: number,
-): Promise<Response> {
+): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -28,10 +30,11 @@ async function request(
       ...init,
       signal: controller.signal,
     });
+    const body = await response.text();
     if (!response.ok) {
-      throw new HttpError(response.status, await response.text(), url);
+      throw new HttpError(response.status, body, url);
     }
-    return response;
+    return body;
   } finally {
     clearTimeout(timer);
   }
@@ -43,8 +46,7 @@ export async function requestJson<T>(
   init: RequestInit,
   timeoutMs: number,
 ): Promise<T> {
-  const response = await request(fetchFn, url, init, timeoutMs);
-  const body = await response.text();
+  const body = await requestBody(fetchFn, url, init, timeoutMs);
   try {
     return JSON.parse(body) as T;
   } catch {
@@ -58,5 +60,5 @@ export async function requestText(
   init: RequestInit,
   timeoutMs: number,
 ): Promise<string> {
-  return (await request(fetchFn, url, init, timeoutMs)).text();
+  return requestBody(fetchFn, url, init, timeoutMs);
 }
