@@ -1,8 +1,14 @@
-import { requestJson, toQuotaError, type FetchLike } from "../http.js";
+import {
+  isAbsoluteHttpUrl,
+  requestJson,
+  rethrowQuota,
+  type FetchLike,
+} from "../http.js";
 import type {
   CrawlProvider,
   CrawlRequest,
   CrawlResult,
+  Page,
   ScrapeProvider,
   ScrapeRequest,
   ScrapeResult,
@@ -54,7 +60,7 @@ export class TavilyProvider implements ScrapeProvider, CrawlProvider {
     }
     return {
       provider: this.name,
-      url: result.url || request.url,
+      url: isAbsoluteHttpUrl(result.url) ? result.url : request.url,
       markdown: result.raw_content,
     };
   }
@@ -71,12 +77,16 @@ export class TavilyProvider implements ScrapeProvider, CrawlProvider {
       format: "markdown",
       extract_depth: "basic",
     });
+    // Each crawl page must carry its own absolute URL; drop malformed ones
+    // rather than emit a relative URL (crashes output validation) or duplicate
+    // the crawl root across pages.
     const pages = (response.results ?? [])
-      .filter((result) => result.raw_content)
-      .map((result) => ({
-        url: result.url || request.url,
-        markdown: result.raw_content ?? "",
-      }));
+      .map((result): Page | undefined =>
+        result.raw_content && isAbsoluteHttpUrl(result.url)
+          ? { url: result.url, markdown: result.raw_content }
+          : undefined,
+      )
+      .filter((page): page is Page => page !== undefined);
     if (pages.length === 0) {
       throw new Error("Tavily crawl returned no page content");
     }
@@ -101,7 +111,7 @@ export class TavilyProvider implements ScrapeProvider, CrawlProvider {
         this.options.requestTimeoutMs,
       );
     } catch (error) {
-      throw toQuotaError(this.name, error, [402, 432, 433]);
+      rethrowQuota(this.name, error, [402, 432, 433]);
     }
   }
 }

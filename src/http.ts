@@ -27,17 +27,30 @@ export class QuotaExceededError extends Error {
   }
 }
 
-// Converts an HttpError with a hard quota/credit status into a
-// QuotaExceededError; passes every other error through unchanged.
-export function toQuotaError(
+// Rethrows an error, converting an HttpError with a hard quota/credit status
+// into a QuotaExceededError; every other error is rethrown unchanged.
+export function rethrowQuota(
   provider: string,
   error: unknown,
   quotaStatuses: readonly number[],
-): unknown {
+): never {
   if (error instanceof HttpError && quotaStatuses.includes(error.status)) {
-    return new QuotaExceededError(provider, error.status);
+    throw new QuotaExceededError(provider, error.status);
   }
-  return error;
+  throw error;
+}
+
+// True only for an absolute http(s) URL — the shape pageSchema.url() accepts.
+// Guards against relative/garbage provider URLs that would otherwise fail
+// output validation outside the tool handler as an unrecoverable McpError.
+export function isAbsoluteHttpUrl(value: string | undefined): value is string {
+  if (!value) return false;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 // Reads the full body under the same timeout/abort as the request so a stalled

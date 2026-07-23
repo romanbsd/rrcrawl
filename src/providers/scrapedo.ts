@@ -1,4 +1,9 @@
-import { requestText, toQuotaError, type FetchLike } from "../http.js";
+import {
+  HttpError,
+  QuotaExceededError,
+  requestText,
+  type FetchLike,
+} from "../http.js";
 import type {
   ScrapeProvider,
   ScrapeRequest,
@@ -28,8 +33,12 @@ export class ScrapeDoProvider implements ScrapeProvider {
       endpoint.searchParams.set("token", this.options.apiToken);
     }
 
-    // 402 Payment Required is the permanent out-of-credits signal; 429
-    // (rate/concurrency) is transient and left to normal failover.
+    // Scrape.do returns the *target's* HTTP status. Distinguish its own
+    // control-plane errors from the scraped page's status:
+    //   402 -> out of credits (permanent quota)
+    //   400/401/429 -> Scrape.do rejected the request (transient failover)
+    //   everything else (403/404/410/5xx) is the target page's own status;
+    //   Scrape.do still returns its rendered content, so use it.
     let markdown: string;
     try {
       markdown = await requestText(
@@ -39,7 +48,17 @@ export class ScrapeDoProvider implements ScrapeProvider {
         this.options.requestTimeoutMs,
       );
     } catch (error) {
-      throw toQuotaError(this.name, error, [402]);
+      if (error instanceof HttpError) {
+        if (error.status === 402) {
+          throw new QuotaExceededError(this.name, 402);
+        }
+        if (error.status === 400 || error.status === 401 || error.status === 429) {
+          throw error;
+        }
+        markdown = error.responseBody;
+      } else {
+        throw error;
+      }
     }
     if (!markdown.trim()) {
       throw new Error("Scrape.do returned no markdown content");

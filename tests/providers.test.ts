@@ -183,10 +183,14 @@ describe("provider adapters", () => {
     });
   });
 
-  it("falls back to the request URL for Tavily crawl pages missing a URL", async () => {
+  it("drops Tavily crawl pages without an absolute URL", async () => {
     const fetchFn = vi.fn<FetchLike>(async () =>
       jsonResponse({
-        results: [{ url: "", raw_content: "# Page" }],
+        results: [
+          { url: "https://example.com/keep", raw_content: "# Keep" },
+          { url: "", raw_content: "# Empty" },
+          { url: "/relative", raw_content: "# Relative" },
+        ],
       }),
     );
     const provider = new TavilyProvider({
@@ -203,8 +207,59 @@ describe("provider adapters", () => {
       allowExternal: false,
     });
     expect(result.pages).toEqual([
-      { url: "https://example.com", markdown: "# Page" },
+      { url: "https://example.com/keep", markdown: "# Keep" },
     ]);
+  });
+
+  it("follows Firecrawl crawl pagination via next", async () => {
+    const fetchFn = vi
+      .fn<FetchLike>()
+      .mockResolvedValueOnce(jsonResponse({ id: "job-1" }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status: "completed",
+          next: "https://firecrawl.test/v2/crawl/job-1?skip=1",
+          data: [
+            {
+              markdown: "# One",
+              metadata: { sourceURL: "https://example.com/one" },
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status: "completed",
+          next: null,
+          data: [
+            {
+              markdown: "# Two",
+              metadata: { sourceURL: "https://example.com/two" },
+            },
+          ],
+        }),
+      );
+    const provider = new FirecrawlProvider({
+      apiUrl: "https://firecrawl.test",
+      requestTimeoutMs: 1000,
+      crawlTimeoutMs: 1000,
+      pollIntervalMs: 1,
+      fetchFn,
+      sleep: vi.fn(async () => undefined),
+    });
+
+    const result = await provider.crawl({
+      url: "https://example.com",
+      limit: 5,
+      maxDepth: 1,
+      includePaths: [],
+      allowExternal: false,
+    });
+    expect(result.pages).toEqual([
+      { url: "https://example.com/one", markdown: "# One" },
+      { url: "https://example.com/two", markdown: "# Two" },
+    ]);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
   it("omits Scrape.do token in OneCLI mode", async () => {
@@ -219,5 +274,40 @@ describe("provider adapters", () => {
     const requestedUrl = String(fetchFn.mock.calls[0]?.[0]);
     expect(requestedUrl).toContain("output=markdown");
     expect(requestedUrl).not.toContain("token=");
+  });
+
+  it("returns the scraped body when Scrape.do relays a target 404", async () => {
+    const fetchFn = vi.fn<FetchLike>(
+      async () => new Response("# Not Found Page", { status: 404 }),
+    );
+    const provider = new ScrapeDoProvider({
+      apiUrl: "https://api.scrape.do/",
+      apiToken: "t",
+      requestTimeoutMs: 1000,
+      fetchFn,
+    });
+
+    await expect(
+      provider.scrape({ url: "https://example.com/missing" }),
+    ).resolves.toMatchObject({ markdown: "# Not Found Page" });
+  });
+
+  it("maps a Scrape.do 402 to quota and fails over on 429", async () => {
+    const make = (status: number) =>
+      new ScrapeDoProvider({
+        apiUrl: "https://api.scrape.do/",
+        apiToken: "t",
+        requestTimeoutMs: 1000,
+        fetchFn: vi.fn<FetchLike>(
+          async () => new Response("blocked", { status }),
+        ),
+      });
+
+    await expect(
+      make(402).scrape({ url: "https://example.com" }),
+    ).rejects.toBeInstanceOf(QuotaExceededError);
+    await expect(
+      make(429).scrape({ url: "https://example.com" }),
+    ).rejects.not.toBeInstanceOf(QuotaExceededError);
   });
 });

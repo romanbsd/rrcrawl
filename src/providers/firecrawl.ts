@@ -1,4 +1,9 @@
-import { requestJson, toQuotaError, type FetchLike } from "../http.js";
+import {
+  isAbsoluteHttpUrl,
+  requestJson,
+  rethrowQuota,
+  type FetchLike,
+} from "../http.js";
 import type {
   CrawlProvider,
   CrawlRequest,
@@ -34,6 +39,7 @@ interface FirecrawlStartResponse {
 interface FirecrawlStatusResponse {
   status?: string;
   data?: FirecrawlDocument[];
+  next?: string | null;
   error?: string;
 }
 
@@ -91,9 +97,10 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
     if (!response.data?.markdown) {
       throw new Error("Firecrawl returned no markdown content");
     }
+    const url = this.documentUrl(response.data);
     const page = this.page(
       response.data,
-      this.documentUrl(response.data) ?? request.url,
+      isAbsoluteHttpUrl(url) ? url : request.url,
     );
     return { provider: this.name, ...page };
   }
@@ -137,12 +144,13 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
       );
 
       if (status.status === "completed") {
-        // Each crawl page must carry its own URL. If Firecrawl omits it we drop
-        // the page rather than mislabel every one with the crawl root.
-        const pages = (status.data ?? [])
+        const documents = await this.collectDocuments(status, request.limit);
+        // Each crawl page must carry its own absolute URL. If Firecrawl omits
+        // it we drop the page rather than mislabel every one with the crawl root.
+        const pages = documents
           .map((document): Page | undefined => {
             const url = this.documentUrl(document);
-            return document.markdown && url
+            return document.markdown && isAbsoluteHttpUrl(url)
               ? this.page(document, url)
               : undefined;
           })
@@ -165,6 +173,27 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
     );
   }
 
+  // Firecrawl paginates crawl results: `next` holds the URL of the following
+  // batch (returned when the response exceeds ~10MB). Follow it until null so
+  // large crawls don't silently return only the first batch. Bounded by the
+  // requested page limit — there can't be more result pages than documents.
+  private async collectDocuments(
+    first: FirecrawlStatusResponse,
+    limit: number,
+  ): Promise<FirecrawlDocument[]> {
+    const documents = [...(first.data ?? [])];
+    let next = first.next;
+    for (let i = 0; next && documents.length < limit && i < limit; i += 1) {
+      const batch = await this.json<FirecrawlStatusResponse>(next, {
+        method: "GET",
+        headers: this.headers(),
+      });
+      documents.push(...(batch.data ?? []));
+      next = batch.next;
+    }
+    return documents;
+  }
+
   // 402 Payment Required is Firecrawl's insufficient-credits signal (permanent).
   // 429 rate limits are transient and deliberately left to normal failover.
   private async json<T>(url: string, init: RequestInit): Promise<T> {
@@ -176,7 +205,7 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
         this.options.requestTimeoutMs,
       );
     } catch (error) {
-      throw toQuotaError(this.name, error, [402]);
+      rethrowQuota(this.name, error, [402]);
     }
   }
 
