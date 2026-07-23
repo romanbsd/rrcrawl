@@ -2,6 +2,7 @@
 import "dotenv/config";
 import { createRequire } from "node:module";
 import { loadConfig } from "./config.js";
+import { configureProxy } from "./proxy.js";
 import { runServer } from "./server.js";
 
 const require = createRequire(import.meta.url);
@@ -27,6 +28,7 @@ Configuration is read from environment variables and .env.
 See https://www.npmjs.com/package/rrcrawl for details.`);
     return;
   }
+  configureProxy();
   await runServer(loadConfig());
 }
 

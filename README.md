@@ -96,6 +96,12 @@ RRCRAWL_AUTH_MODE=onecli onecli run -- node dist/index.js
 No placeholder provider keys are required: rrcrawl omits the credential fields
 in OneCLI mode.
 
+When `HTTPS_PROXY` or `HTTP_PROXY` is set (as OneCLI's gateway does), rrcrawl
+installs a matching proxy dispatcher on startup so all provider calls route
+through the gateway. Node's global `fetch` does not honor these variables on
+its own, so this is required behind an egress-locked gateway. `NODE_EXTRA_CA_CERTS`
+(also injected by the gateway) is honored automatically for the gateway's CA.
+
 ## Local MCP client configuration
 
 After `npm run build`, configure an MCP client with:
