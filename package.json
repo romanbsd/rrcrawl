@@ -18,6 +18,7 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
+    "smoke": "tsx scripts/smoke.ts",
     "prepack": "npm run build",
     "prepublishOnly": "npm test && npm run check"
   },
