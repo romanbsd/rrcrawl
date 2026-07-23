@@ -3,6 +3,24 @@
   "version": "0.1.0",
   "description": "Tiny round-robin crawl MCP backed by Firecrawl, Tavily, and Scrape.do",
   "license": "MIT",
+  "author": "Roman Shterenzon <roman.shterenzon@gmail.com>",
+  "homepage": "https://github.com/romanbsd/rrcrawl#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/romanbsd/rrcrawl.git"
+  },
+  "bugs": {
+    "url": "https://github.com/romanbsd/rrcrawl/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "scrape",
+    "crawl",
+    "firecrawl",
+    "tavily",
+    "scrape.do"
+  ],
   "type": "module",
   "bin": {
     "rrcrawl": "./dist/index.js"
