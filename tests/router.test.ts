@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { QuotaExceededError } from "../src/http.js";
+import { HttpError, QuotaExceededError } from "../src/http.js";
 import {
   AllProvidersFailedError,
   RoundRobinRouter,
@@ -75,6 +75,20 @@ describe("RoundRobinRouter", () => {
     await expect(
       router.scrape({ url: "https://example.com" }),
     ).rejects.toBeInstanceOf(AllProvidersFailedError);
+  });
+
+  it("records the HTTP status of each provider failure", async () => {
+    const firecrawl = scraper(
+      "firecrawl",
+      vi.fn(async () => {
+        throw new HttpError(403, "forbidden", "https://api.firecrawl.dev");
+      }),
+    );
+    const router = new RoundRobinRouter([firecrawl], []);
+
+    await expect(router.scrape({ url: "https://example.com" })).rejects.toMatchObject({
+      failures: [{ provider: "firecrawl", status: 403 }],
+    });
   });
 
   it("disables a provider after a quota error and skips it thereafter", async () => {
@@ -155,5 +169,19 @@ describe("RoundRobinRouter", () => {
         allowExternal: false,
       }),
     ).resolves.toMatchObject({ provider: "tavily" });
+  });
+
+  it("throws when no crawl-capable provider is configured", async () => {
+    const router = new RoundRobinRouter([scraper("scrapedo")], []);
+
+    await expect(
+      router.crawl({
+        url: "https://example.com",
+        limit: 10,
+        maxDepth: 1,
+        includePaths: [],
+        allowExternal: false,
+      }),
+    ).rejects.toThrow(/No crawl-capable provider/);
   });
 });

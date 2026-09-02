@@ -8,6 +8,7 @@ export interface AppConfig {
   requestTimeoutMs: number;
   crawlTimeoutMs: number;
   pollIntervalMs: number;
+  extractConcurrency: number;
   firecrawl: { apiUrl: string; apiKey?: string };
   tavily: { apiUrl: string; apiKey?: string };
   scrapedo: { apiUrl: string; apiToken?: string };
@@ -25,6 +26,7 @@ function positiveInteger(
   env: Environment,
   name: string,
   fallback: number,
+  max?: number,
 ): number {
   const value = env[name];
   if (!value) return fallback;
@@ -37,11 +39,14 @@ function positiveInteger(
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`);
   }
+  if (max !== undefined && parsed > max) {
+    throw new Error(`${name} must be at most ${max}`);
+  }
   return parsed;
 }
 
 function parseAuthMode(env: Environment): AuthMode {
-  const configured = env.RRCRAWL_AUTH_MODE ?? "auto";
+  const configured = (env.RRCRAWL_AUTH_MODE ?? "auto").trim();
   if (configured === "auto") {
     return env.ONECLI_URL ? "onecli" : "env";
   }
@@ -126,6 +131,12 @@ export function loadConfig(env: Environment = process.env): AppConfig {
       env,
       "RRCRAWL_POLL_INTERVAL_MS",
       2_000,
+    ),
+    extractConcurrency: positiveInteger(
+      env,
+      "RRCRAWL_EXTRACT_CONCURRENCY",
+      4,
+      16,
     ),
     firecrawl: {
       apiUrl: (env.FIRECRAWL_API_URL ?? "https://api.firecrawl.dev").replace(

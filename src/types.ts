@@ -37,3 +37,36 @@ export interface CrawlProvider {
   readonly name: ProviderName;
   crawl(request: CrawlRequest): Promise<CrawlResult>;
 }
+
+export interface ExtractRequest {
+  urls: string[];
+  query?: string;
+  mode: "full" | "relevant";
+  maxCharsPerPage: number;
+  maxTotalChars: number;
+  fresh: boolean;
+}
+
+export interface ExtractedPage {
+  requestedUrl: string;
+  url: string;
+  title?: string;
+  markdown: string;
+  provider: ProviderName;
+  cached: boolean;
+  truncated: boolean;
+  originalChars?: number;
+  returnedChars: number;
+}
+
+export interface FetchFailure {
+  url: string;
+  error: string;
+  code?: string;
+  attemptedProviders: ProviderName[];
+}
+
+export interface ExtractResult {
+  pages: ExtractedPage[];
+  failures: FetchFailure[];
+}

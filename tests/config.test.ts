@@ -26,6 +26,15 @@ describe("loadConfig", () => {
     expect(config.firecrawl.apiKey).toBeUndefined();
   });
 
+  it("trims whitespace around the auth mode value", () => {
+    const config = loadConfig({
+      RRCRAWL_AUTH_MODE: " onecli ",
+      ONECLI_URL: "http://127.0.0.1:10254",
+    });
+
+    expect(config.authMode).toBe("onecli");
+  });
+
   it("rejects a non-decimal timeout value", () => {
     expect(() =>
       loadConfig({
@@ -43,5 +52,24 @@ describe("loadConfig", () => {
         RRCRAWL_PROVIDERS: "tavily",
       }),
     ).toThrow("Missing credentials");
+  });
+
+  it("defaults extract concurrency to 4", () => {
+    const config = loadConfig({
+      RRCRAWL_AUTH_MODE: "env",
+      FIRECRAWL_API_KEY: "fire",
+    });
+
+    expect(config.extractConcurrency).toBe(4);
+  });
+
+  it("rejects extract concurrency above 16", () => {
+    expect(() =>
+      loadConfig({
+        RRCRAWL_AUTH_MODE: "env",
+        FIRECRAWL_API_KEY: "fire",
+        RRCRAWL_EXTRACT_CONCURRENCY: "17",
+      }),
+    ).toThrow("must be at most 16");
   });
 });
