@@ -5,8 +5,21 @@ import {
   ListToolsResultSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AppConfig } from "../src/config.js";
 import { RoundRobinRouter } from "../src/router.js";
 import { createServer } from "../src/server.js";
+
+const testConfig: AppConfig = {
+  authMode: "env",
+  providers: ["firecrawl"],
+  requestTimeoutMs: 60_000,
+  crawlTimeoutMs: 180_000,
+  pollIntervalMs: 2_000,
+  extractConcurrency: 4,
+  firecrawl: { apiUrl: "https://api.firecrawl.dev" },
+  tavily: { apiUrl: "https://api.tavily.com" },
+  scrapedo: { apiUrl: "https://api.scrape.do/" },
+};
 
 describe("MCP server", () => {
   const closeables: Array<{ close(): Promise<void> }> = [];
@@ -15,7 +28,45 @@ describe("MCP server", () => {
     await Promise.all(closeables.splice(0).map((closeable) => closeable.close()));
   });
 
-  it("advertises the two-tool surface and invokes scrape end to end", async () => {
+  async function connect(server: ReturnType<typeof createServer>) {
+    const client = new Client({ name: "rrcrawl-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    closeables.push(client, server);
+    await Promise.all([
+      client.connect(clientTransport),
+      server.connect(serverTransport),
+    ]);
+    return client;
+  }
+
+  it("advertises the tool surface in preference order", async () => {
+    const router = new RoundRobinRouter(
+      [{ name: "firecrawl", scrape: vi.fn() }],
+      [],
+    );
+    const server = createServer(router, "0.1.0", testConfig);
+    const client = await connect(server);
+
+    const listed = await client.request(
+      { method: "tools/list", params: {} },
+      ListToolsResultSchema,
+    );
+    expect(listed.tools.map((tool) => tool.name)).toEqual([
+      "extract",
+      "crawl",
+      "scrape",
+    ]);
+    for (const tool of listed.tools) {
+      expect(tool.annotations).toEqual({
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+    }
+  });
+
+  it("invokes scrape end to end as a compatibility wrapper", async () => {
     const scrape = vi.fn(async ({ url }: { url: string }) => ({
       provider: "firecrawl" as const,
       url,
@@ -26,22 +77,8 @@ describe("MCP server", () => {
       [{ name: "firecrawl", scrape }],
       [],
     );
-    const server = createServer(router, "0.1.0");
-    const client = new Client({ name: "rrcrawl-test", version: "1.0.0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    closeables.push(client, server);
-
-    await Promise.all([
-      client.connect(clientTransport),
-      server.connect(serverTransport),
-    ]);
-
-    const listed = await client.request(
-      { method: "tools/list", params: {} },
-      ListToolsResultSchema,
-    );
-    expect(listed.tools.map((tool) => tool.name)).toEqual(["scrape", "crawl"]);
+    const server = createServer(router, "0.1.0", testConfig);
+    const client = await connect(server);
 
     const result = await client.request(
       {
@@ -56,11 +93,147 @@ describe("MCP server", () => {
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toEqual({
       provider: "firecrawl",
-      url: "https://example.com",
+      url: "https://example.com/",
       title: "Example",
       markdown: "# Example",
     });
     expect(scrape).toHaveBeenCalledOnce();
+  });
+
+  it("invokes extract end to end", async () => {
+    const scrape = vi.fn(async ({ url }: { url: string }) => ({
+      provider: "firecrawl" as const,
+      url,
+      title: "Example",
+      markdown: "# Example",
+    }));
+    const router = new RoundRobinRouter(
+      [{ name: "firecrawl", scrape }],
+      [],
+    );
+    const server = createServer(router, "0.1.0", testConfig);
+    const client = await connect(server);
+
+    const result = await client.request(
+      {
+        method: "tools/call",
+        params: {
+          name: "extract",
+          arguments: { urls: ["https://example.com"] },
+        },
+      },
+      CallToolResultSchema,
+    );
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({
+      pages: [
+        {
+          requestedUrl: "https://example.com/",
+          url: "https://example.com/",
+          title: "Example",
+          markdown: "# Example",
+          provider: "firecrawl",
+          cached: false,
+          truncated: false,
+          originalChars: 9,
+          returnedChars: 9,
+        },
+      ],
+      failures: [],
+    });
+    const text = result.content
+      .map((content) => (content.type === "text" ? content.text : ""))
+      .join("");
+    expect(text).toContain("# Example");
+    expect(text).toContain("Source: https://example.com/");
+    expect(text).not.toContain('"provider"');
+  });
+
+  it("returns partial failure without isError when some pages succeed", async () => {
+    const scrape = vi.fn(async ({ url }: { url: string }) => {
+      if (url === "https://example.com/good") {
+        return {
+          provider: "firecrawl" as const,
+          url,
+          markdown: "# Good",
+        };
+      }
+      throw new Error("boom");
+    });
+    const router = new RoundRobinRouter([{ name: "firecrawl", scrape }], []);
+    const server = createServer(router, "0.1.0", testConfig);
+    const client = await connect(server);
+
+    const result = await client.request(
+      {
+        method: "tools/call",
+        params: {
+          name: "extract",
+          arguments: {
+            urls: ["https://example.com/good", "https://example.com/bad"],
+          },
+        },
+      },
+      CallToolResultSchema,
+    );
+    expect(result.isError).not.toBe(true);
+    const structured = result.structuredContent as {
+      pages: Array<{ url: string }>;
+      failures: Array<{ url: string; error: string }>;
+    };
+    expect(structured.pages.map((page) => page.url)).toEqual([
+      "https://example.com/good",
+    ]);
+    expect(structured.failures).toHaveLength(1);
+    expect(structured.failures[0].url).toBe("https://example.com/bad");
+    expect(structured.failures[0].error).toContain("boom");
+  });
+
+  it("marks extract isError when every URL fails", async () => {
+    const scrape = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const router = new RoundRobinRouter([{ name: "firecrawl", scrape }], []);
+    const server = createServer(router, "0.1.0", testConfig);
+    const client = await connect(server);
+
+    const result = await client.request(
+      {
+        method: "tools/call",
+        params: {
+          name: "extract",
+          arguments: { urls: ["https://example.com/1", "https://example.com/2"] },
+        },
+      },
+      CallToolResultSchema,
+    );
+    expect(result.isError).toBe(true);
+    const structured = result.structuredContent as { failures: unknown[] };
+    expect(structured.failures).toHaveLength(2);
+  });
+
+  it("rejects relevant mode until relevance extraction ships", async () => {
+    const scrape = vi.fn();
+    const router = new RoundRobinRouter([{ name: "firecrawl", scrape }], []);
+    const server = createServer(router, "0.1.0", testConfig);
+    const client = await connect(server);
+
+    const result = await client.request(
+      {
+        method: "tools/call",
+        params: {
+          name: "extract",
+          arguments: {
+            urls: ["https://example.com"],
+            mode: "relevant",
+            query: "credentials",
+          },
+        },
+      },
+      CallToolResultSchema,
+    );
+    expect(result.isError).toBe(true);
+    expect(scrape).not.toHaveBeenCalled();
   });
 
   it("invokes crawl end to end with parsed defaults", async () => {
@@ -72,16 +245,8 @@ describe("MCP server", () => {
       [{ name: "firecrawl", scrape: vi.fn() }],
       [{ name: "tavily", crawl }],
     );
-    const server = createServer(router, "0.1.0");
-    const client = new Client({ name: "rrcrawl-test", version: "1.0.0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    closeables.push(client, server);
-
-    await Promise.all([
-      client.connect(clientTransport),
-      server.connect(serverTransport),
-    ]);
+    const server = createServer(router, "0.1.0", testConfig);
+    const client = await connect(server);
 
     const result = await client.request(
       {
@@ -112,16 +277,8 @@ describe("MCP server", () => {
       throw new Error("rate limited");
     });
     const router = new RoundRobinRouter([{ name: "firecrawl", scrape }], []);
-    const server = createServer(router, "0.1.0");
-    const client = new Client({ name: "rrcrawl-test", version: "1.0.0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    closeables.push(client, server);
-
-    await Promise.all([
-      client.connect(clientTransport),
-      server.connect(serverTransport),
-    ]);
+    const server = createServer(router, "0.1.0", testConfig);
+    const client = await connect(server);
 
     const result = await client.request(
       {
@@ -142,16 +299,8 @@ describe("MCP server", () => {
   it("rejects non-HTTP URLs before reaching the provider", async () => {
     const scrape = vi.fn();
     const router = new RoundRobinRouter([{ name: "firecrawl", scrape }], []);
-    const server = createServer(router, "0.1.0");
-    const client = new Client({ name: "rrcrawl-test", version: "1.0.0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    closeables.push(client, server);
-
-    await Promise.all([
-      client.connect(clientTransport),
-      server.connect(serverTransport),
-    ]);
+    const server = createServer(router, "0.1.0", testConfig);
+    const client = await connect(server);
 
     const result = await client.request(
       {

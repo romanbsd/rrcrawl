@@ -53,4 +53,23 @@ describe("loadConfig", () => {
       }),
     ).toThrow("Missing credentials");
   });
+
+  it("defaults extract concurrency to 4", () => {
+    const config = loadConfig({
+      RRCRAWL_AUTH_MODE: "env",
+      FIRECRAWL_API_KEY: "fire",
+    });
+
+    expect(config.extractConcurrency).toBe(4);
+  });
+
+  it("rejects extract concurrency above 16", () => {
+    expect(() =>
+      loadConfig({
+        RRCRAWL_AUTH_MODE: "env",
+        FIRECRAWL_API_KEY: "fire",
+        RRCRAWL_EXTRACT_CONCURRENCY: "17",
+      }),
+    ).toThrow("must be at most 16");
+  });
 });

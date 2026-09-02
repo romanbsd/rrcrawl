@@ -1,4 +1,4 @@
-import { QuotaExceededError } from "./http.js";
+import { HttpError, QuotaExceededError } from "./http.js";
 import type {
   CrawlProvider,
   CrawlRequest,
@@ -12,7 +12,11 @@ import type {
 export class AllProvidersFailedError extends Error {
   constructor(
     readonly operation: "scrape" | "crawl",
-    readonly failures: Array<{ provider: ProviderName; message: string }>,
+    readonly failures: Array<{
+      provider: ProviderName;
+      message: string;
+      status?: number;
+    }>,
   ) {
     super(
       `All ${operation} providers failed: ${failures
@@ -83,7 +87,11 @@ export class RoundRobinRouter {
 
     const start = this.cursor[operation] % active.length;
     this.cursor[operation] += 1;
-    const failures: Array<{ provider: ProviderName; message: string }> = [];
+    const failures: Array<{
+      provider: ProviderName;
+      message: string;
+      status?: number;
+    }> = [];
 
     for (let offset = 0; offset < active.length; offset += 1) {
       const provider = active[(start + offset) % active.length];
@@ -96,6 +104,7 @@ export class RoundRobinRouter {
         failures.push({
           provider: provider.name,
           message: error instanceof Error ? error.message : String(error),
+          status: error instanceof HttpError ? error.status : undefined,
         });
       }
     }
