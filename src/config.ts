@@ -41,7 +41,7 @@ function positiveInteger(
 }
 
 function parseAuthMode(env: Environment): AuthMode {
-  const configured = env.RRCRAWL_AUTH_MODE ?? "auto";
+  const configured = (env.RRCRAWL_AUTH_MODE ?? "auto").trim();
   if (configured === "auto") {
     return env.ONECLI_URL ? "onecli" : "env";
   }

@@ -58,7 +58,7 @@ export class RoundRobinRouter {
     );
   }
 
-  crawl(request: CrawlRequest): Promise<CrawlResult> {
+  async crawl(request: CrawlRequest): Promise<CrawlResult> {
     if (this.crawlProviders.length === 0) {
       throw new Error(
         "No crawl-capable provider configured; enable Firecrawl or Tavily",

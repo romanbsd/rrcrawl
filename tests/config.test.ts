@@ -26,6 +26,15 @@ describe("loadConfig", () => {
     expect(config.firecrawl.apiKey).toBeUndefined();
   });
 
+  it("trims whitespace around the auth mode value", () => {
+    const config = loadConfig({
+      RRCRAWL_AUTH_MODE: " onecli ",
+      ONECLI_URL: "http://127.0.0.1:10254",
+    });
+
+    expect(config.authMode).toBe("onecli");
+  });
+
   it("rejects a non-decimal timeout value", () => {
     expect(() =>
       loadConfig({

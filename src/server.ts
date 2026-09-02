@@ -17,6 +17,13 @@ const pageSchema = z.object({
   markdown: z.string(),
 });
 
+// The tool descriptions promise HTTP(S) only; z.string().url() alone would
+// accept ftp:// or file:// which providers may not scrape correctly.
+const httpUrl = z
+  .string()
+  .url()
+  .regex(/^https?:\/\//i, "must be an HTTP or HTTPS URL");
+
 function toErrorResult(error: unknown) {
   return {
     content: [
@@ -63,10 +70,13 @@ export function createRouter(config: AppConfig): RoundRobinRouter {
   return new RoundRobinRouter(scrapeProviders, crawlProviders);
 }
 
-export function createServer(router: RoundRobinRouter): McpServer {
+export function createServer(
+  router: RoundRobinRouter,
+  version: string,
+): McpServer {
   const server = new McpServer({
     name: "rrcrawl",
-    version: "0.1.0",
+    version,
   });
 
   server.registerTool(
@@ -76,7 +86,7 @@ export function createServer(router: RoundRobinRouter): McpServer {
       description:
         "Fetch one URL as normalized Markdown. Requests rotate across all configured providers and fail over on errors.",
       inputSchema: {
-        url: z.string().url().describe("HTTP or HTTPS URL to scrape"),
+        url: httpUrl.describe("HTTP or HTTPS URL to scrape"),
       },
       outputSchema: pageSchema.extend({
         provider: z.enum(["firecrawl", "tavily", "scrapedo"]),
@@ -112,7 +122,7 @@ export function createServer(router: RoundRobinRouter): McpServer {
       description:
         "Crawl multiple pages as normalized Markdown. Requests rotate between configured crawl-capable providers (Firecrawl and Tavily) and fail over on errors.",
       inputSchema: {
-        url: z.string().url().describe("Root HTTP or HTTPS URL"),
+        url: httpUrl.describe("Root HTTP or HTTPS URL"),
         limit: z
           .number()
           .int()
@@ -185,7 +195,10 @@ export function createServer(router: RoundRobinRouter): McpServer {
   return server;
 }
 
-export async function runServer(config: AppConfig): Promise<void> {
-  const server = createServer(createRouter(config));
+export async function runServer(
+  config: AppConfig,
+  version: string,
+): Promise<void> {
+  const server = createServer(createRouter(config), version);
   await server.connect(new StdioServerTransport());
 }
