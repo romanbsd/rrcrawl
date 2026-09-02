@@ -136,34 +136,29 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
       throw new Error("Firecrawl did not return a crawl job id");
     }
 
+    const statusUrl = `${this.options.apiUrl}/v2/crawl/${encodeURIComponent(started.id)}`;
     const deadline = Date.now() + this.options.crawlTimeoutMs;
-    while (Date.now() < deadline) {
-      const status = await this.json<FirecrawlStatusResponse>(
-        `${this.options.apiUrl}/v2/crawl/${encodeURIComponent(started.id)}`,
-        { method: "GET", headers: this.headers() },
-      );
+    const poll = (): Promise<FirecrawlStatusResponse> =>
+      this.json<FirecrawlStatusResponse>(statusUrl, {
+        method: "GET",
+        headers: this.headers(),
+      });
 
+    for (;;) {
+      const status = await poll();
       if (status.status === "completed") {
-        const documents = await this.collectDocuments(status, request.limit);
-        // Each crawl page must carry its own absolute URL. If Firecrawl omits
-        // it we drop the page rather than mislabel every one with the crawl root.
-        const pages = documents
-          .map((document): Page | undefined => {
-            const url = this.documentUrl(document);
-            return document.markdown && isAbsoluteHttpUrl(url)
-              ? this.page(document, url)
-              : undefined;
-          })
-          .filter((page): page is Page => page !== undefined);
-        if (pages.length === 0) {
-          throw new Error("Firecrawl crawl completed without page content");
-        }
-        return { provider: this.name, pages };
+        return {
+          provider: this.name,
+          pages: await this.completedPages(status, request.limit),
+        };
       }
       if (status.status === "failed" || status.status === "cancelled") {
         throw new Error(
           `Firecrawl crawl ${status.status}: ${status.error ?? "unknown error"}`,
         );
+      }
+      if (Date.now() >= deadline) {
+        break;
       }
       await this.sleep(this.options.pollIntervalMs);
     }
@@ -173,25 +168,42 @@ export class FirecrawlProvider implements ScrapeProvider, CrawlProvider {
     );
   }
 
-  // Firecrawl paginates crawl results: `next` holds the URL of the following
-  // batch (returned when the response exceeds ~10MB). Follow it until null so
-  // large crawls don't silently return only the first batch. Bounded by the
-  // requested page limit — there can't be more result pages than documents.
-  private async collectDocuments(
+  private async completedPages(
     first: FirecrawlStatusResponse,
     limit: number,
-  ): Promise<FirecrawlDocument[]> {
-    const documents = [...(first.data ?? [])];
-    let next = first.next;
-    for (let i = 0; next && documents.length < limit && i < limit; i += 1) {
-      const batch = await this.json<FirecrawlStatusResponse>(next, {
+  ): Promise<Page[]> {
+    const pages: Page[] = [];
+    let batch = first;
+
+    // Firecrawl paginates large results through `next`. Continue until enough
+    // usable pages have been collected, rather than counting malformed entries
+    // against the caller's page limit.
+    // Each crawl page must carry its own absolute URL. If Firecrawl omits it we
+    // drop the page rather than mislabel every one with the crawl root.
+    for (let i = 0; i <= limit; i += 1) {
+      for (const document of batch.data ?? []) {
+        const url = this.documentUrl(document);
+        if (document.markdown && isAbsoluteHttpUrl(url)) {
+          pages.push(this.page(document, url));
+          if (pages.length === limit) {
+            return pages;
+          }
+        }
+      }
+
+      if (!batch.next || i === limit) {
+        break;
+      }
+      batch = await this.json<FirecrawlStatusResponse>(batch.next, {
         method: "GET",
         headers: this.headers(),
       });
-      documents.push(...(batch.data ?? []));
-      next = batch.next;
     }
-    return documents;
+
+    if (pages.length === 0) {
+      throw new Error("Firecrawl crawl completed without page content");
+    }
+    return pages;
   }
 
   // 402 Payment Required is Firecrawl's insufficient-credits signal (permanent).

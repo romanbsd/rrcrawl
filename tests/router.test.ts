@@ -156,4 +156,18 @@ describe("RoundRobinRouter", () => {
       }),
     ).resolves.toMatchObject({ provider: "tavily" });
   });
+
+  it("throws when no crawl-capable provider is configured", async () => {
+    const router = new RoundRobinRouter([scraper("scrapedo")], []);
+
+    await expect(
+      router.crawl({
+        url: "https://example.com",
+        limit: 10,
+        maxDepth: 1,
+        includePaths: [],
+        allowExternal: false,
+      }),
+    ).rejects.toThrow(/No crawl-capable provider/);
+  });
 });

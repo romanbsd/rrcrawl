@@ -262,6 +262,170 @@ describe("provider adapters", () => {
     expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
+  it("caps Firecrawl crawl pages at the requested limit", async () => {
+    const fetchFn = vi
+      .fn<FetchLike>()
+      .mockResolvedValueOnce(jsonResponse({ id: "job-1" }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status: "completed",
+          data: [
+            {
+              markdown: "# One",
+              metadata: { sourceURL: "https://example.com/one" },
+            },
+            {
+              markdown: "# Two",
+              metadata: { sourceURL: "https://example.com/two" },
+            },
+            {
+              markdown: "# Three",
+              metadata: { sourceURL: "https://example.com/three" },
+            },
+          ],
+        }),
+      );
+    const provider = new FirecrawlProvider({
+      apiUrl: "https://firecrawl.test",
+      requestTimeoutMs: 1000,
+      crawlTimeoutMs: 1000,
+      pollIntervalMs: 1,
+      fetchFn,
+      sleep: vi.fn(async () => undefined),
+    });
+
+    const result = await provider.crawl({
+      url: "https://example.com",
+      limit: 2,
+      maxDepth: 1,
+      includePaths: [],
+      allowExternal: false,
+    });
+    expect(result.pages).toEqual([
+      { url: "https://example.com/one", markdown: "# One" },
+      { url: "https://example.com/two", markdown: "# Two" },
+    ]);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts only valid Firecrawl documents toward the page limit", async () => {
+    const fetchFn = vi
+      .fn<FetchLike>()
+      .mockResolvedValueOnce(jsonResponse({ id: "job-1" }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status: "completed",
+          data: [
+            {
+              markdown: "# Invalid",
+              metadata: { sourceURL: "/relative" },
+            },
+            {
+              markdown: "# Valid",
+              metadata: { sourceURL: "https://example.com/valid" },
+            },
+          ],
+        }),
+      );
+    const provider = new FirecrawlProvider({
+      apiUrl: "https://firecrawl.test",
+      requestTimeoutMs: 1000,
+      crawlTimeoutMs: 1000,
+      pollIntervalMs: 1,
+      fetchFn,
+      sleep: vi.fn(async () => undefined),
+    });
+
+    const result = await provider.crawl({
+      url: "https://example.com",
+      limit: 1,
+      maxDepth: 1,
+      includePaths: [],
+      allowExternal: false,
+    });
+    expect(result.pages).toEqual([
+      { url: "https://example.com/valid", markdown: "# Valid" },
+    ]);
+  });
+
+  it("times out a crawl that never finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchFn = vi
+        .fn<FetchLike>()
+        .mockResolvedValueOnce(jsonResponse({ id: "job-1" }))
+        .mockImplementation(async () => jsonResponse({ status: "processing" }));
+      const provider = new FirecrawlProvider({
+        apiUrl: "https://firecrawl.test",
+        requestTimeoutMs: 1000,
+        crawlTimeoutMs: 5000,
+        pollIntervalMs: 1000,
+        fetchFn,
+        sleep: vi.fn(async () => {
+          vi.setSystemTime(Date.now() + 1000);
+        }),
+      });
+
+      await expect(
+        provider.crawl({
+          url: "https://example.com",
+          limit: 5,
+          maxDepth: 1,
+          includePaths: [],
+          allowExternal: false,
+        }),
+      ).rejects.toThrow("timed out");
+      expect(fetchFn).toHaveBeenCalledTimes(7);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("honors a crawl that completes just past the deadline via a final poll", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchFn = vi
+        .fn<FetchLike>()
+        .mockResolvedValueOnce(jsonResponse({ id: "job-1" }))
+        .mockResolvedValueOnce(jsonResponse({ status: "processing" }))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            status: "completed",
+            data: [
+              {
+                markdown: "# Done",
+                metadata: { sourceURL: "https://example.com/done" },
+              },
+            ],
+          }),
+        );
+      const provider = new FirecrawlProvider({
+        apiUrl: "https://firecrawl.test",
+        requestTimeoutMs: 1000,
+        crawlTimeoutMs: 5000,
+        pollIntervalMs: 1000,
+        fetchFn,
+        sleep: vi.fn(async () => {
+          vi.setSystemTime(Date.now() + 6000);
+        }),
+      });
+
+      const result = await provider.crawl({
+        url: "https://example.com",
+        limit: 5,
+        maxDepth: 1,
+        includePaths: [],
+        allowExternal: false,
+      });
+      expect(result.pages).toEqual([
+        { url: "https://example.com/done", markdown: "# Done" },
+      ]);
+      expect(fetchFn).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("omits Scrape.do token in OneCLI mode", async () => {
     const fetchFn = vi.fn<FetchLike>(async () => new Response("# Scrape.do"));
     const provider = new ScrapeDoProvider({

@@ -29,7 +29,7 @@ See https://www.npmjs.com/package/rrcrawl for details.`);
     return;
   }
   configureProxy();
-  await runServer(loadConfig());
+  await runServer(loadConfig(), version);
 }
 
 main().catch((error: unknown) => {
