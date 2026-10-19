@@ -1,8 +1,8 @@
 name: Publish
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ['v*']
 
 jobs:
   publish:
@@ -17,8 +17,10 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
+      - name: Verify tag matches package version
+        run: node --input-type=module -e 'import fs from "node:fs"; const { version } = JSON.parse(fs.readFileSync("package.json", "utf8")); if (process.env.GITHUB_REF_NAME !== `v${version}`) throw new Error("Tag does not match package version");'
       # Trusted Publishing needs npm >= 11.5.1; setup-node ships an older one.
-      - run: npm install -g npm@latest
+      - run: npm install -g npm@11
       - run: npm ci
       # No NODE_AUTH_TOKEN: OIDC exchanges a short-lived token, and provenance
       # is attached automatically. prepublishOnly runs test+check; prepack builds.
