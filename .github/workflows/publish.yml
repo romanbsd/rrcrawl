@@ -22,6 +22,8 @@ jobs:
       # Trusted Publishing needs npm >= 11.5.1; setup-node ships an older one.
       - run: npm install -g npm@11
       - run: npm ci
+      # npm validates bin paths before running lifecycle hooks.
+      - run: npm run build
       # No NODE_AUTH_TOKEN: OIDC exchanges a short-lived token, and provenance
       # is attached automatically. prepublishOnly runs test+check; prepack builds.
       - run: npm publish --access public
